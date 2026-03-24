@@ -1,0 +1,490 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/azure/azure-dev/cli/azd/cmd/actions"
+	"github.com/azure/azure-dev/cli/azd/internal"
+	"github.com/azure/azure-dev/cli/azd/pkg/account"
+	"github.com/azure/azure-dev/cli/azd/pkg/alpha"
+	"github.com/azure/azure-dev/cli/azd/pkg/apphost"
+	"github.com/azure/azure-dev/cli/azd/pkg/async"
+	"github.com/azure/azure-dev/cli/azd/pkg/azapi"
+	"github.com/azure/azure-dev/cli/azd/pkg/cloud"
+	"github.com/azure/azure-dev/cli/azd/pkg/environment"
+	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
+	"github.com/azure/azure-dev/cli/azd/pkg/exec"
+	"github.com/azure/azure-dev/cli/azd/pkg/input"
+	"github.com/azure/azure-dev/cli/azd/pkg/output"
+	"github.com/azure/azure-dev/cli/azd/pkg/output/ux"
+	"github.com/azure/azure-dev/cli/azd/pkg/project"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+)
+
+type DeployFlags struct {
+	ServiceName string
+	All         bool
+	Timeout     int
+	fromPackage string
+	flagSet     *pflag.FlagSet
+	global      *internal.GlobalCommandOptions
+	*internal.EnvFlag
+}
+
+const defaultDeployTimeoutSeconds = 1200
+
+func (d *DeployFlags) Bind(local *pflag.FlagSet, global *internal.GlobalCommandOptions) {
+	d.BindNonCommon(local, global)
+	d.bindCommon(local, global)
+}
+
+func (d *DeployFlags) BindNonCommon(
+	local *pflag.FlagSet,
+	global *internal.GlobalCommandOptions) {
+	local.StringVar(
+		&d.ServiceName,
+		"service",
+		"",
+		//nolint:lll
+		"Deploys a specific service (when the string is unspecified, all services that are listed in the "+azdcontext.ProjectFileName+" file are deployed).",
+	)
+	//deprecate:flag hide --service
+	_ = local.MarkHidden("service")
+	d.global = global
+}
+
+func (d *DeployFlags) bindCommon(local *pflag.FlagSet, global *internal.GlobalCommandOptions) {
+	d.EnvFlag = &internal.EnvFlag{}
+	d.EnvFlag.Bind(local, global)
+	d.flagSet = local
+
+	local.BoolVar(
+		&d.All,
+		"all",
+		false,
+		"Deploys all services that are listed in "+azdcontext.ProjectFileName,
+	)
+	local.StringVar(
+		&d.fromPackage,
+		"from-package",
+		"",
+		//nolint:lll
+		"Deploys the packaged service located at the provided path. Supports zipped file packages (file path) or container images (image tag).",
+	)
+	local.IntVar(
+		&d.Timeout,
+		"timeout",
+		defaultDeployTimeoutSeconds,
+		fmt.Sprintf(
+			"Maximum time in seconds for azd to wait for each service deployment. This stops azd from waiting "+
+				"but does not cancel the Azure-side deployment. (default: %d)",
+			defaultDeployTimeoutSeconds,
+		),
+	)
+}
+
+func (d *DeployFlags) SetCommon(envFlag *internal.EnvFlag) {
+	d.EnvFlag = envFlag
+}
+
+func NewDeployFlags(cmd *cobra.Command, global *internal.GlobalCommandOptions) *DeployFlags {
+	flags := &DeployFlags{}
+	flags.Bind(cmd.Flags(), global)
+
+	return flags
+}
+
+func NewDeployFlagsFromEnvAndOptions(envFlag *internal.EnvFlag, global *internal.GlobalCommandOptions) *DeployFlags {
+	return &DeployFlags{
+		Timeout: defaultDeployTimeoutSeconds,
+		EnvFlag: envFlag,
+		global:  global,
+	}
+}
+
+func (d *DeployFlags) timeoutChanged() bool {
+	if d.flagSet == nil {
+		return false
+	}
+
+	timeoutFlag := d.flagSet.Lookup("timeout")
+	return timeoutFlag != nil && timeoutFlag.Changed
+}
+
+func NewDeployCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "deploy <service>",
+		Short: "Deploy your project code to Azure.",
+	}
+	cmd.Args = cobra.MaximumNArgs(1)
+
+	return cmd
+}
+
+type DeployAction struct {
+	flags               *DeployFlags
+	args                []string
+	projectConfig       *project.ProjectConfig
+	azdCtx              *azdcontext.AzdContext
+	env                 *environment.Environment
+	envManager          environment.Manager
+	projectManager      project.ProjectManager
+	serviceManager      project.ServiceManager
+	resourceManager     project.ResourceManager
+	accountManager      account.Manager
+	azCli               *azapi.AzureClient
+	portalUrlBase       string
+	formatter           output.Formatter
+	writer              io.Writer
+	console             input.Console
+	commandRunner       exec.CommandRunner
+	alphaFeatureManager *alpha.FeatureManager
+	importManager       *project.ImportManager
+}
+
+func NewDeployAction(
+	flags *DeployFlags,
+	args []string,
+	projectConfig *project.ProjectConfig,
+	projectManager project.ProjectManager,
+	serviceManager project.ServiceManager,
+	resourceManager project.ResourceManager,
+	azdCtx *azdcontext.AzdContext,
+	environment *environment.Environment,
+	envManager environment.Manager,
+	accountManager account.Manager,
+	cloud *cloud.Cloud,
+	azCli *azapi.AzureClient,
+	commandRunner exec.CommandRunner,
+	console input.Console,
+	formatter output.Formatter,
+	writer io.Writer,
+	alphaFeatureManager *alpha.FeatureManager,
+	importManager *project.ImportManager,
+) actions.Action {
+	return &DeployAction{
+		flags:               flags,
+		args:                args,
+		projectConfig:       projectConfig,
+		azdCtx:              azdCtx,
+		env:                 environment,
+		envManager:          envManager,
+		projectManager:      projectManager,
+		serviceManager:      serviceManager,
+		resourceManager:     resourceManager,
+		accountManager:      accountManager,
+		portalUrlBase:       cloud.PortalUrlBase,
+		azCli:               azCli,
+		formatter:           formatter,
+		writer:              writer,
+		console:             console,
+		commandRunner:       commandRunner,
+		alphaFeatureManager: alphaFeatureManager,
+		importManager:       importManager,
+	}
+}
+
+type DeploymentResult struct {
+	Timestamp time.Time                               `json:"timestamp"`
+	Services  map[string]*project.ServiceDeployResult `json:"services"`
+}
+
+func (da *DeployAction) Run(ctx context.Context) (*actions.ActionResult, error) {
+	targetServiceName := da.flags.ServiceName
+	if len(da.args) == 1 {
+		targetServiceName = da.args[0]
+	}
+
+	if da.env.GetSubscriptionId() == "" {
+		return nil, &internal.ErrorWithSuggestion{
+			Err:        internal.ErrInfraNotProvisioned,
+			Suggestion: "Run 'azd provision' to set up infrastructure before deploying.",
+		}
+	}
+
+	targetServiceName, err := getTargetServiceName(
+		ctx,
+		da.projectManager,
+		da.importManager,
+		da.projectConfig,
+		string(project.ServiceEventDeploy),
+		targetServiceName,
+		da.flags.All,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if da.flags.All && da.flags.fromPackage != "" {
+		return nil, &internal.ErrorWithSuggestion{
+			Err:        internal.ErrFromPackageWithAll,
+			Suggestion: "Use 'azd deploy <service> --from-package <path>' to target a specific service.",
+		}
+	}
+
+	if targetServiceName == "" && da.flags.fromPackage != "" {
+		return nil, &internal.ErrorWithSuggestion{
+			Err:        internal.ErrFromPackageNoService,
+			Suggestion: "Use 'azd deploy <service> --from-package <path>' to target a specific service.",
+		}
+	}
+
+	if err := da.projectManager.Initialize(ctx, da.projectConfig); err != nil {
+		return nil, err
+	}
+
+	if err := da.projectManager.EnsureServiceTargetTools(ctx, da.projectConfig, func(svc *project.ServiceConfig) bool {
+		return targetServiceName == "" || svc.Name == targetServiceName
+	}); err != nil {
+		return nil, err
+	}
+
+	// Command title
+	da.console.MessageUxItem(ctx, &ux.MessageTitle{
+		Title: "Deploying services (azd deploy)",
+	})
+
+	startTime := time.Now()
+
+	stableServices, err := da.importManager.ServiceStableFiltered(ctx, da.projectConfig, targetServiceName, da.env.Getenv)
+	if err != nil {
+		return nil, err
+	}
+
+	projectEventArgs := project.ProjectLifecycleEventArgs{
+		Project: da.projectConfig,
+	}
+
+	deployResults := map[string]*project.ServiceDeployResult{}
+	deployTimeout, err := da.resolveDeployTimeout()
+	if err != nil {
+		return nil, err
+	}
+
+	err = da.projectConfig.Invoke(ctx, project.ProjectEventDeploy, projectEventArgs, func() error {
+		for _, svc := range stableServices {
+			stepMessage := fmt.Sprintf("Deploying service %s", svc.Name)
+			da.console.ShowSpinner(ctx, stepMessage, input.Step)
+
+			if alphaFeatureId, isAlphaFeature := alpha.IsFeatureKey(string(svc.Host)); isAlphaFeature {
+				// alpha feature on/off detection for host is done during initialization.
+				// This is just for displaying the warning during deployment.
+				da.console.WarnForFeature(ctx, alphaFeatureId)
+			}
+
+			// Initialize service context for tracking artifacts across operations
+			serviceContext := project.NewServiceContext()
+
+			if da.flags.fromPackage != "" {
+				// --from-package set, skip packaging and create package artifact
+				err = serviceContext.Package.Add(&project.Artifact{
+					Kind:         determineArtifactKind(da.flags.fromPackage),
+					Location:     da.flags.fromPackage,
+					LocationKind: project.LocationKindLocal,
+				})
+
+				if err != nil {
+					da.console.StopSpinner(ctx, stepMessage, input.StepFailed)
+					return err
+				}
+			} else {
+				//  --from-package not set, automatically package the application
+				_, err := async.RunWithProgress(
+					func(packageProgress project.ServiceProgress) {
+						progressMessage := fmt.Sprintf("Packaging service %s (%s)", svc.Name, packageProgress.Message)
+						da.console.ShowSpinner(ctx, progressMessage, input.Step)
+					},
+					func(progress *async.Progress[project.ServiceProgress]) (*project.ServicePackageResult, error) {
+						return da.serviceManager.Package(ctx, svc, serviceContext, progress, nil)
+					},
+				)
+
+				// do not stop progress here as next step is to publish
+				if err != nil {
+					da.console.StopSpinner(ctx, stepMessage, input.StepFailed)
+					return err
+				}
+			}
+
+			_, err := async.RunWithProgress(
+				func(publishProgress project.ServiceProgress) {
+					progressMessage := fmt.Sprintf("Publishing service %s (%s)", svc.Name, publishProgress.Message)
+					da.console.ShowSpinner(ctx, progressMessage, input.Step)
+				},
+				func(progress *async.Progress[project.ServiceProgress]) (*project.ServicePublishResult, error) {
+					return da.serviceManager.Publish(ctx, svc, serviceContext, progress, nil)
+				},
+			)
+
+			// do not stop progress here as next step is to deploy
+			if err != nil {
+				da.console.StopSpinner(ctx, stepMessage, input.StepFailed)
+				return err
+			}
+
+			deployCtx, deployCancel := context.WithTimeout(ctx, deployTimeout)
+			defer deployCancel()
+
+			deployResult, err := async.RunWithProgress(
+				func(deployProgress project.ServiceProgress) {
+					progressMessage := fmt.Sprintf("Deploying service %s (%s)", svc.Name, deployProgress.Message)
+					da.console.ShowSpinner(ctx, progressMessage, input.Step)
+				},
+				func(progress *async.Progress[project.ServiceProgress]) (*project.ServiceDeployResult, error) {
+					return da.serviceManager.Deploy(deployCtx, svc, serviceContext, progress)
+				},
+			)
+
+			if err != nil {
+				da.console.StopSpinner(ctx, stepMessage, input.StepFailed)
+				if deployCtx.Err() == context.DeadlineExceeded {
+					warnMsg := fmt.Sprintf(
+						"Deployment of service '%s' exceeded the azd wait timeout."+
+							" azd has stopped waiting, but the deployment may"+
+							" still be running in Azure.",
+						svc.Name,
+					)
+					da.console.MessageUxItem(ctx, &ux.WarningMessage{
+						Description: warnMsg,
+						Hints: []string{
+							"Check the Azure Portal for current deployment status.",
+							"Increase timeout with --timeout flag or AZD_DEPLOY_TIMEOUT env var.",
+						},
+					})
+
+					return fmt.Errorf(
+						"deployment of service '%s' timed out after %d seconds. To increase, use --timeout flag "+
+							"or AZD_DEPLOY_TIMEOUT env var. Note: azd has stopped "+
+							"waiting, but the deployment may still be running in Azure. Check the Azure Portal for "+
+							"current deployment status.",
+						svc.Name,
+						int(deployTimeout.Seconds()),
+					)
+				}
+				return err
+			}
+
+			// clean up for packages automatically created in temp dir
+			if da.flags.fromPackage == "" {
+				for _, artifact := range serviceContext.Package {
+					if artifact.Kind == project.ArtifactKindArchive && strings.HasPrefix(artifact.Location, os.TempDir()) {
+						if err := os.RemoveAll(artifact.Location); err != nil {
+							log.Printf("failed to remove temporary package: %s : %s", artifact.Location, err)
+						}
+					}
+				}
+			}
+
+			da.console.StopSpinner(ctx, stepMessage, input.GetStepResultFormat(err))
+			deployResults[svc.Name] = deployResult
+
+			// report deploy outputs
+			da.console.MessageUxItem(ctx, deployResult.Artifacts)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	aspireDashboardUrl := apphost.AspireDashboardUrl(ctx, da.env, da.alphaFeatureManager)
+	if aspireDashboardUrl != nil {
+		da.console.MessageUxItem(ctx, aspireDashboardUrl)
+	}
+
+	if da.formatter.Kind() == output.JsonFormat {
+		deployResult := DeploymentResult{
+			Timestamp: time.Now(),
+			Services:  deployResults,
+		}
+
+		if fmtErr := da.formatter.Format(deployResult, da.writer, nil); fmtErr != nil {
+			return nil, fmt.Errorf("deploy result could not be displayed: %w", fmtErr)
+		}
+	}
+
+	// Invalidate cache after successful deploy so azd show will refresh
+	if err := da.envManager.InvalidateEnvCache(ctx, da.env.Name()); err != nil {
+		log.Printf("warning: failed to invalidate state cache: %v", err)
+	}
+
+	return &actions.ActionResult{
+		Message: &actions.ResultMessage{
+			Header: fmt.Sprintf("Your application was deployed to Azure in %s.", ux.DurationAsText(since(startTime))),
+			FollowUp: getResourceGroupFollowUp(ctx,
+				da.formatter,
+				da.portalUrlBase,
+				da.projectConfig,
+				da.resourceManager,
+				da.env,
+				false,
+			),
+		},
+	}, nil
+}
+
+func (da *DeployAction) resolveDeployTimeout() (time.Duration, error) {
+	if da.flags.timeoutChanged() {
+		if da.flags.Timeout <= 0 {
+			return 0, errors.New("invalid value for --timeout: must be greater than 0 seconds")
+		}
+
+		return time.Duration(da.flags.Timeout) * time.Second, nil
+	}
+
+	if envVal, ok := os.LookupEnv("AZD_DEPLOY_TIMEOUT"); ok {
+		seconds, err := strconv.Atoi(envVal)
+		if err != nil {
+			return 0, fmt.Errorf("invalid AZD_DEPLOY_TIMEOUT value '%s': must be an integer number of seconds", envVal)
+		}
+		if seconds <= 0 {
+			return 0, fmt.Errorf("invalid AZD_DEPLOY_TIMEOUT value '%d': must be greater than 0 seconds", seconds)
+		}
+		return time.Duration(seconds) * time.Second, nil
+	}
+
+	return time.Duration(defaultDeployTimeoutSeconds) * time.Second, nil
+}
+
+func GetCmdDeployHelpDescription(*cobra.Command) string {
+	return generateCmdHelpDescription("Deploy application to Azure.", []string{
+		formatHelpNote(
+			"By default, deploys all services listed in 'azure.yaml' in the current directory," +
+				" or the service described in the project that matches the current directory."),
+		formatHelpNote(
+			fmt.Sprintf("When %s is set, only the specific service is deployed.", output.WithHighLightFormat("<service>"))),
+		formatHelpNote("After the deployment is complete, the endpoint is printed. To start the service, select" +
+			" the endpoint or paste it in a browser."),
+	})
+}
+
+func GetCmdDeployHelpFooter(*cobra.Command) string {
+	return generateCmdHelpSamplesBlock(map[string]string{
+		"Deploy all services in the current project to Azure.": output.WithHighLightFormat(
+			"azd deploy --all",
+		),
+		"Deploy the service named 'api' to Azure.": output.WithHighLightFormat(
+			"azd deploy api",
+		),
+		"Deploy the service named 'web' to Azure.": output.WithHighLightFormat(
+			"azd deploy web",
+		),
+		"Deploy the service named 'api' to Azure from a previously generated package.": output.WithHighLightFormat(
+			"azd deploy api --from-package <package-path>",
+		),
+	})
+}

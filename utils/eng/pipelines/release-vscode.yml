@@ -1,0 +1,27 @@
+# Continuous deployment trigger
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - ext/vscode
+      - eng/pipelines/release-vscode.yml
+
+pr:
+  paths:
+    include:
+      - ext/vscode
+      - eng/pipelines/release-vscode.yml
+
+extends: 
+  template: /eng/pipelines/templates/stages/1es-redirect.yml
+  parameters:
+    stages:
+    - template: /eng/pipelines/templates/stages/vscode-build-and-test.yml
+
+    - template: /eng/pipelines/templates/stages/vscode-sign.yml
+
+    - template: /eng/pipelines/templates/stages/vscode-publish-manual.yml
+
+    - template: /eng/pipelines/templates/stages/vscode-publish-integration.yml

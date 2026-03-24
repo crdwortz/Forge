@@ -1,0 +1,6 @@
+index.js
+node_modules
+.taskkey
+index.js
+tests/*.js
+tests/*.log

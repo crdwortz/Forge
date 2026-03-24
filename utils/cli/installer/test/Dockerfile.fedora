@@ -1,0 +1,20 @@
+ARG prefix=''
+ARG base='fedora:37'
+FROM ${prefix}${base}
+
+ARG shell='bash'
+ARG baseUrl='must set baseUrl'
+ARG version='must set version'
+
+RUN yum install -y which
+
+COPY ./*.sh ./
+COPY test/telemetry/fedora.sh.telemetry.csv /telemetry.csv
+
+ENV SHELL="${shell}"
+ENV BASE_URL="${baseUrl}"
+ENV VERSION="${version}"
+
+ENTRYPOINT ./test-sh-install.sh $SHELL $BASE_URL $VERSION \
+    && ./test-telemetry-functions.sh \
+    && ./test-sh-install-errors.sh $SHELL $BASEURL $VERSION

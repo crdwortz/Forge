@@ -1,0 +1,80 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Output path for local repoman generation
+/.output
+
+# Test binary, built with `go test -c`
+*.test
+
+/bin
+/.envrc
+
+# GoLand temp files
+.idea 
+
+# go code coverage outputs
+# text format
+*.out
+# binary formats
+covcounters.*
+covmeta.*
+
+# Go workspace files (for local development)
+go.work
+go.work.sum
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Python temporary files
+[.]venv/
+*.py[co]
+__pycache__/
+
+.env
+.azure
+/cli/azd/bin
+/cli/azd/pkg/oneauth/bridge/_build
+*env/
+obj/
+bin/
+node_modules/
+test-results/
+
+# terraform .tfstate files
+**/.terraform
+*.tfstate*
+*.terraform*
+
+# Finder state files
+.DS_Store
+cli/azd/azure-dev
+cli/azd/azure-dev.exe
+cli/azd/azd
+cli/azd/azd.exe
+cli/azd/extensions/azure.coding-agent/azurecodingagent
+cli/azd/extensions/azure.coding-agent/azurecodingagent.exe
+cli/azd/extensions/azure.ai.agents/azureaiagent
+cli/azd/extensions/azure.ai.agents/azureaiagent.exe
+cli/azd/extensions/azure.ai.finetune/azure.ai.finetune
+cli/azd/extensions/azure.ai.finetune/azure.ai.finetune.exe
+cli/azd/extensions/microsoft.azd.extensions/microsoft.azd.extensions
+cli/azd/extensions/microsoft.azd.extensions/microsoft.azd.extensions.exe
+cli/azd/extensions/microsoft.azd.ai.builder/microsoft.azd.ai.builder
+cli/azd/extensions/microsoft.azd.ai.builder/microsoft.azd.ai.builder.exe
+cli/azd/extensions/microsoft.azd.demo/microsoft.azd.demo
+cli/azd/extensions/microsoft.azd.demo/microsoft.azd.demo.exe
+cli/azd/extensions/microsoft.azd.concurx/microsoft.azd.concurx
+cli/azd/extensions/microsoft.azd.concurx/microsoft.azd.concurx.exe
+cli/azd/azd-test
+cli/azd/azd
+cli/azd/extensions/microsoft.azd.concurx/concurx
+cli/azd/extensions/microsoft.azd.concurx/concurx.exe
+cli/azd/extensions/azure.appservice/azureappservice
+cli/azd/extensions/azure.appservice/azureappservice.exe
+.squad/

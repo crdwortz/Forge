@@ -1,0 +1,84 @@
+parameters:
+  CreateGitHubRelease: true
+  PublishUploadLocations:
+  UploadInstaller: false
+  StorageContainerName: '`$web'
+
+steps:
+  - ${{ if eq('true', parameters.CreateGitHubRelease) }}:
+    # This step must run first because a duplicated tag means we don't need to
+    # continue with any of the subsequent steps.
+    - pwsh: |
+        $tag = "azure-dev-cli_$(CLI_VERSION)"
+        Write-Host "Release tag: $tag"
+
+        # Check for tag using gh API
+        $existingTag = gh api /repos/$(Build.Repository.Name)/tags | ConvertFrom-Json | Where-Object { $_.name -eq $tag }
+        if ($existingTag) {
+            Write-Host "Tag $tag already exists. Exiting."
+            exit 1
+        }
+
+        gh release view $tag --repo $(Build.Repository.Name)
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "Release ($tag) already exists. Exiting."
+          exit 1
+        }
+
+        Write-Host "##vso[task.setvariable variable=GH_RELEASE_TAG;]$tag"
+
+        # Exit with 0 (otherwise $LASTEXITCODE will not be 0 and the pipeline
+        # will fail)
+        exit 0
+      displayName: Check for existing GitHub release
+      env:
+        GH_TOKEN: $(azuresdk-github-pat)
+
+    - pwsh: |
+        Remove-Item -Path release/_manifest -Recurse -Force
+        Write-Host "Release:"
+        Get-ChildItem -Recurse release/ | Select-Object -Property Length,FullName 
+      displayName: Remove _manifest folder from release
+
+    - pwsh: |
+        gh release create `
+          "$(GH_RELEASE_TAG)" `
+          --title "$(GH_RELEASE_TAG)" `
+          --notes-file changelog/CHANGELOG.md `
+          --repo $(Build.Repository.Name)
+
+        gh release upload $(GH_RELEASE_TAG) release/* --repo $(Build.Repository.Name)
+      displayName: Create GitHub Release and upload artifacts
+      env:
+        GH_TOKEN: $(azuresdk-github-pat)
+
+  - ${{ if eq('true', parameters.UploadInstaller) }}:
+    - pwsh: |
+        Copy-Item installer/install-azd.sh release/
+        Copy-Item installer/install-azd-report.sh release/
+        Copy-Item installer/uninstall-azd.sh release/
+        Copy-Item installer/install-azd.ps1 release/
+        Copy-Item installer/uninstall-azd.ps1 release/
+      displayName: Copy install scripts to release (PR only)
+
+  - task: AzurePowerShell@5
+    displayName: Upload release to storage account
+    inputs:
+      azureSubscription: 'Azure SDK Artifacts'
+      azurePowerShellVersion: LatestVersion
+      pwsh: true
+      ScriptType: InlineScript
+      Inline: |
+        $uploadLocations = "${{ parameters.PublishUploadLocations }}" -split ';'
+
+        Get-ChildItem release/
+        foreach ($folder in $uploadLocations) {
+            Write-Host "Upload to ${{ parameters.StorageContainerName }}/azd/standalone/$folder"
+            azcopy copy "release/*" "$(publish-storage-location)/${{ parameters.StorageContainerName }}/azd/standalone/$folder" --overwrite=true
+            if ($LASTEXITCODE) {
+              Write-Error "Upload failed"
+              exit 1
+            }
+        }
+    env:
+      AZCOPY_AUTO_LOGIN_TYPE: 'PSCRED'

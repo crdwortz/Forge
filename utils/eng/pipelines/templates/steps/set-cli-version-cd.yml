@@ -1,0 +1,10 @@
+steps:
+  - task: PowerShell@2
+    displayName: Set version for CD release
+    inputs:
+      pwsh: true
+      targetType: filePath
+      filePath: eng/scripts/Set-CliVersionInBuild.ps1
+      arguments: >-
+                -BuildReason ($env:BUILDREASONOVERRIDE ?? '$(Build.Reason)')
+                -BuildId $(Build.BuildId)

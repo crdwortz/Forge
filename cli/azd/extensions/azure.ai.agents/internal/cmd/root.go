@@ -1,0 +1,83 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+
+	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+)
+
+type rootFlagsDefinition struct {
+	Debug    bool
+	NoPrompt bool
+}
+
+// Enable access to the global command flags
+var rootFlags rootFlagsDefinition
+
+func NewRootCommand() *cobra.Command {
+	rootCmd := &cobra.Command{
+		Use:           "agent <command> [options]",
+		Short:         fmt.Sprintf("Ship agents with Microsoft Foundry from your terminal. %s", color.YellowString("(Preview)")),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
+	}
+
+	// Show the ASCII art banner above the default help text for the root command
+	defaultHelp := rootCmd.HelpFunc()
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		if cmd == rootCmd {
+			printBanner(cmd.OutOrStdout())
+		}
+		defaultHelp(cmd, args)
+	})
+
+	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
+	rootCmd.PersistentFlags().BoolVar(
+		&rootFlags.Debug,
+		"debug",
+		false,
+		"Enable debug mode",
+	)
+
+	// Adds support for `--no-prompt` global flag in azd
+	// Without this the extension command will error when the flag is provided
+	rootCmd.PersistentFlags().BoolVar(
+		&rootFlags.NoPrompt,
+		"no-prompt",
+		false,
+		"Accepts the default value instead of prompting, or it fails if there is no default.",
+	)
+
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if !cmd.Flags().Changed("no-prompt") {
+			if v := os.Getenv("AZD_NO_PROMPT"); v != "" {
+				if b, err := strconv.ParseBool(v); err == nil {
+					rootFlags.NoPrompt = b
+				}
+			}
+		}
+		return nil
+	}
+
+	rootCmd.AddCommand(newListenCommand())
+	rootCmd.AddCommand(newVersionCommand())
+	rootCmd.AddCommand(newInitCommand(&rootFlags))
+	rootCmd.AddCommand(newRunCommand())
+	rootCmd.AddCommand(newInvokeCommand())
+	rootCmd.AddCommand(newMcpCommand())
+	rootCmd.AddCommand(newMetadataCommand())
+	rootCmd.AddCommand(newShowCommand())
+	rootCmd.AddCommand(newMonitorCommand())
+	rootCmd.AddCommand(newFilesCommand())
+
+	return rootCmd
+}

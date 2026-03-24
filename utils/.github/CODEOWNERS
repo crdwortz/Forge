@@ -1,0 +1,30 @@
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax
+
+/**                @wbreza @vhvb1989 @hemarina @weikanglim @JeffreyCA @tg-msft @rajeshkamal5050
+
+/cli/              @wbreza @vhvb1989 @hemarina @weikanglim @JeffreyCA @tg-msft @rajeshkamal5050
+/cli/installer/    @danieljurek @vhvb1989 @tg-msft @rajeshkamal5050
+
+/ext/              @karolz-ms @vhvb1989 @tg-msft @rajeshkamal5050
+
+/ext/azuredevops/  @vhvb1989 @hemarina @tg-msft @rajeshkamal5050
+
+/ext/devcontainer/ @vhvb1989 @hemarina @tg-msft @rajeshkamal5050
+
+/ext/vscode/       @bwateratmsft @vhvb1989 @tg-msft @rajeshkamal5050 @karolz-ms
+
+/.github/          @danieljurek @vhvb1989 @tg-msft @rajeshkamal5050
+
+/.config/1espt/    @Azure/azure-sdk-eng
+
+/eng/              @danieljurek @vhvb1989 @tg-msft @rajeshkamal5050
+
+/schemas/          @wbreza @vhvb1989 @tg-msft @rajeshkamal5050
+
+/.github/CODEOWNERS   @rajeshkamal5050 @Azure/azure-sdk-eng
+
+/cli/azd/extensions/azure.ai.agents/  @wbreza @vhvb1989 @hemarina @weikanglim @JeffreyCA @tg-msft @rajeshkamal5050 @trangevi @trrwilson @therealjohn
+
+/cli/azd/extensions/azure.ai.finetune/  @wbreza @vhvb1989 @hemarina @weikanglim @JeffreyCA @tg-msft @rajeshkamal5050 @trangevi @achauhan-scc @kingernupur @rabollin @saanikaguptamicrosoft
+
+/cli/azd/extensions/azure.ai.models/  @wbreza @vhvb1989 @hemarina @weikanglim @JeffreyCA @tg-msft @rajeshkamal5050 @trangevi @achauhan-scc @kingernupur @rabollin @saanikaguptamicrosoft

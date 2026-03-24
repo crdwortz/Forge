@@ -1,0 +1,85 @@
+name: vscode-ci
+
+on:
+  pull_request:
+    paths:
+      - "ext/vscode/**"
+      - ".github/workflows/vscode-ci.yml"
+    branches: [main]
+
+# If two events are triggered within a short time in the same PR, cancel the run of the oldest event
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+jobs:
+  cspell-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g cspell@8.13.1
+      - name: Spell check for vscode extension
+        run: cspell lint '**/*.ts' --config ./ext/vscode/.vscode/cspell.yaml --root ./ext/vscode --no-progress
+
+  build-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        node-version: [22.x]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            upload-artifact: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # On push to `main` name the file `azure-dev-latest.vsix` instead of
+      # `azure-dev-<version>.vsix`
+      - name: Set package additional arguments
+        id: package-arguments
+        uses: actions/github-script@v5
+        with:
+          result-encoding: string
+          script: |
+            let packageArguments = ''
+            if (context.eventName == 'workflow_dispatch' || context.eventName == 'push') {
+              packageArguments = '--out azure-dev-latest.vsix'
+            }
+            return packageArguments
+
+      - name: Install dependencies
+        run: |
+          npm install -g npm
+          npm ci --no-optional
+        working-directory: ./ext/vscode
+
+      - name: Test
+        run: ./ci-test.ps1
+        shell: pwsh
+        working-directory: ./ext/vscode
+
+      - run: ./ci-package.ps1 -PackageArguments "${{ steps.package-arguments.outputs.result }}"
+        if: matrix.upload-artifact == true
+        shell: pwsh
+        working-directory: ./ext/vscode
+
+      - name: 'Upload azd binary to artifact store (upload-artifact: true only)'
+        if: matrix.upload-artifact == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: ./ext/vscode/azure-dev*.vsix
