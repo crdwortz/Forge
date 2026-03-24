@@ -71,6 +71,24 @@ uv run python -m src.main
 # Server will be available at http://localhost:8000
 ```
 
+### Web Interface (Easiest Way)
+
+For a user-friendly chat interface, open `frontend.html` in your browser:
+
+```bash
+# Start the server first
+uv run python -m src.main
+
+# Then open the frontend in your browser
+# Double-click frontend.html or open it with your browser
+```
+
+The web interface provides:
+- **Chat-style interface** for asking questions
+- **Example questions** to get started
+- **Real-time responses** from the RAG system
+- **Source information** showing how many documents were used
+
 ### API Documentation
 
 Once the server is running, access the interactive API documentation:
@@ -213,6 +231,7 @@ rag-project/
 ├── README.md                     # This file
 ├── STATUS.md                     # Implementation checklist
 ├── instructions.md               # Project instructions
+├── frontend.html                 # Web interface for asking questions
 └── verify_startup.py             # Startup verification script
 ```
 

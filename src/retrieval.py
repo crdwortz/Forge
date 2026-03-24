@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 class RetrievalService:
     """Service for retrieving documents from the vector database."""
     
-    def __init__(self):
+    def __init__(self, ingestion_service=None):
         """Initialize the retrieval service."""
-        self.ingestion_service = DataIngestionService()
+        self.ingestion_service = ingestion_service
         self.embedding_model = get_embedding_model()
     
     async def retrieve_documents(

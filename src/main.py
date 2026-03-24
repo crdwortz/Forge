@@ -34,7 +34,7 @@ app = FastAPI(
 
 # Initialize services
 ingestion_service = DataIngestionService()
-retrieval_service = RetrievalService()
+retrieval_service = RetrievalService(ingestion_service)
 generation_service = GenerationService()
 
 

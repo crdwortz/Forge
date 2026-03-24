@@ -72,7 +72,7 @@ class RAGValidator:
         try:
             # Start server in background
             self.server_process = subprocess.Popen(
-                ["uv", "run", "python", "-m", "src.main"],
+                ["uv", "run", "python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True

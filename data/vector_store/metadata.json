@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-03-24T20:59:29.068490",
+  "documents_loaded": 5,
+  "dataset_url": "hf://datasets/rag-datasets/rag-mini-wikipedia/data/passages.parquet/part.0.parquet",
+  "embedding_model": "text-embedding-3-large",
+  "vector_db_type": "LlamaIndex SimpleVectorStore",
+  "dataset_info": {
+    "total_rows": 5,
+    "columns": [
+      "passage_id",
+      "title",
+      "passage"
+    ]
+  }
+}

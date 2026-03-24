@@ -13,7 +13,23 @@ import json
 from datetime import datetime
 import time
 
-import pandas as pd
+# Import pandas only when needed to avoid type extension conflicts
+def _get_pandas():
+    try:
+        import pandas as pd
+        return pd
+    except Exception as e:
+        logger.warning(f"Failed to import pandas: {e}")
+        # Try to handle type extension conflicts
+        try:
+            import pandas as pd
+            # Force re-registration if needed
+            if hasattr(pd, '_libs'):
+                pass
+            return pd
+        except Exception as e2:
+            logger.error(f"Failed to import pandas after retry: {e2}")
+            raise
 from llama_index.core import Document, VectorStoreIndex, StorageContext, load_index_from_storage
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.index_store import SimpleIndexStore
@@ -47,7 +63,8 @@ class DataIngestionService:
         self.index = None
         self.embedding_model = None
         self.documents = None
-        self._load_or_create_index()
+        # Don't load index automatically to avoid pandas import issues
+        # self._load_or_create_index()
     
     def _load_or_create_index(self):
         """Load existing index or create a new one."""
@@ -128,20 +145,26 @@ class DataIngestionService:
             # Create DataFrames style dict for compatibility
             passages_data = {
                 'passage_id': [f'doc_{i}' for i in range(len(test_docs))],
-                'title': [title for title, _ in test_docs],
-                'passage': [passage for _, passage in test_docs]
+                'title': [title for title, passage in test_docs],
+                'passage': [passage for title, passage in test_docs]
             }
             
             logger.info(f"Created {len(test_docs)} test documents")
             
             # Limit documents if specified (for testing)
             if max_documents:
-                passages_df = passages_df.head(max_documents)
+                # Convert to list of tuples and limit
+                limited_docs = test_docs[:max_documents]
+                passages_data = {
+                    'passage_id': [f'doc_{i}' for i in range(len(limited_docs))],
+                    'title': [title for title, _ in limited_docs],
+                    'passage': [passage for _, passage in limited_docs]
+                }
                 logger.info(f"Limiting to {max_documents} documents for testing")
             
             # Step 2: Convert to LlamaIndex Documents
             logger.info("Converting passages to LlamaIndex documents...")
-            documents = self._create_documents(passages_df)
+            documents = self._create_documents_from_dict(passages_data)
             logger.info(f"Created {len(documents)} documents")
             
             # Step 3: Create embeddings and build index
@@ -169,7 +192,7 @@ class DataIngestionService:
             logger.info(f"Index persisted to {self.persist_dir}")
             
             # Save metadata
-            self._save_metadata(len(documents), passages_df)
+            self._save_metadata(len(documents), passages_data)
             
             elapsed = time.time() - start_time
             logger.info(f"Data ingestion completed in {elapsed:.2f} seconds")
@@ -185,7 +208,7 @@ class DataIngestionService:
             logger.error(f"Error during data ingestion: {e}", exc_info=True)
             raise
     
-    def _create_documents(self, passages_df: pd.DataFrame) -> List[Document]:
+    def _create_documents(self, passages_df) -> List[Document]:
         """
         Convert DataFrame rows to LlamaIndex Documents.
         
@@ -195,6 +218,7 @@ class DataIngestionService:
         Returns:
             List of LlamaIndex Document objects
         """
+        pd = _get_pandas()
         documents = []
         
         for idx, row in passages_df.iterrows():
@@ -217,7 +241,40 @@ class DataIngestionService:
         
         return documents
     
-    def _save_metadata(self, doc_count: int, passages_df: pd.DataFrame):
+    def _create_documents_from_dict(self, passages_data: dict) -> List[Document]:
+        """
+        Convert dictionary data to LlamaIndex Documents (no pandas dependency).
+        
+        Args:
+            passages_data: Dictionary with 'passage_id', 'title', 'passage' keys
+            
+        Returns:
+            List of LlamaIndex Document objects
+        """
+        documents = []
+        
+        for i in range(len(passages_data['passage_id'])):
+            passage_text = passages_data['passage'][i]
+            title = passages_data['title'][i]
+            passage_id = passages_data['passage_id'][i]
+            
+            # Create metadata
+            metadata = {
+                'title': title,
+                'passage_id': passage_id
+            }
+            
+            # Create LlamaIndex Document
+            doc = Document(
+                text=passage_text,
+                metadata=metadata,
+                doc_id=passage_id
+            )
+            documents.append(doc)
+        
+        return documents
+    
+    def _save_metadata(self, doc_count: int, passages_data: dict):
         """Save ingestion metadata."""
         metadata = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -226,8 +283,8 @@ class DataIngestionService:
             "embedding_model": "text-embedding-3-large",
             "vector_db_type": "LlamaIndex SimpleVectorStore",
             "dataset_info": {
-                "total_rows": len(passages_df),
-                "columns": list(passages_df.columns)
+                "total_rows": len(passages_data['passage_id']),
+                "columns": list(passages_data.keys())
             }
         }
         
